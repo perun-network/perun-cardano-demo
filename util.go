@@ -15,107 +15,37 @@
 package main
 
 import (
-	"context"
+	"encoding/hex"
 	"log"
-	"math/big"
-
-	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
-	ethchannel "perun.network/go-perun/backend/ethereum/channel"
-	ethwallet "perun.network/go-perun/backend/ethereum/wallet"
-	swallet "perun.network/go-perun/backend/ethereum/wallet/simple"
 	"perun.network/go-perun/wire"
+	"perun.network/perun-cardano-backend/channel"
+	"perun.network/perun-cardano-backend/wallet"
+	"perun.network/perun-cardano-backend/wallet/address"
 	"perun.network/perun-examples/payment-channel/client"
 )
-
-// deployContracts deploys the Perun smart contracts on the specified ledger.
-func deployContracts(nodeURL string, chainID uint64, privateKey string) (adj, ah common.Address) {
-	k, err := crypto.HexToECDSA(privateKey)
-	if err != nil {
-		panic(err)
-	}
-	w := swallet.NewWallet(k)
-	cb, err := client.CreateContractBackend(nodeURL, chainID, w)
-	if err != nil {
-		panic(err)
-	}
-	acc := accounts.Account{Address: crypto.PubkeyToAddress(k.PublicKey)}
-
-	// Deploy adjudicator.
-	adj, err = ethchannel.DeployAdjudicator(context.TODO(), cb, acc)
-	if err != nil {
-		panic(err)
-	}
-
-	// Deploy asset holder.
-	ah, err = ethchannel.DeployETHAssetholder(context.TODO(), cb, adj, acc)
-	if err != nil {
-		panic(err)
-	}
-
-	return adj, ah
-}
 
 // setupPaymentClient sets up a new client with the given parameters.
 func setupPaymentClient(
 	name string,
 	bus wire.Bus,
-	nodeURL string,
-	adjudicator common.Address,
-	asset ethwallet.Address,
-	privateKey string,
+	pabHost string,
+	pubKey string,
+	walletId string,
+	r wallet.Remote,
 ) *client.PaymentClient {
-	// Create wallet and account.
-	k, err := crypto.HexToECDSA(privateKey)
-	if err != nil {
-		panic(err)
-	}
-	w := swallet.NewWallet(k)
-	acc := crypto.PubkeyToAddress(k.PublicKey)
+	pubKeyBytes, _ := hex.DecodeString(pubKey)
+	addr, _ := address.MakeAddressFromByteSlice(pubKeyBytes)
 
-	// Create and start client.
-	c, err := client.SetupPaymentClient(
-		name,
-		bus,
-		w,
-		acc,
-		nodeURL,
-		chainID,
-		adjudicator,
-		asset,
-	)
+	w := wallet.NewRemoteWallet(r, walletId)
+	acc, err := w.Unlock(&addr)
+	if err != nil {
+		log.Fatalf("error unlocking alice's account: %v", err)
+	}
+
+	c, err := client.SetupPaymentClient(name, bus, acc.(wallet.RemoteAccount), pabHost, w, channel.Asset)
 	if err != nil {
 		panic(err)
 	}
 
 	return c
-}
-
-// balanceLogger is a utility for logging client balances.
-type balanceLogger struct {
-	ethClient *ethclient.Client
-}
-
-// newBalanceLogger creates a new balance logger for the specified ledger.
-func newBalanceLogger(chainURL string) balanceLogger {
-	c, err := ethclient.Dial(chainURL)
-	if err != nil {
-		panic(err)
-	}
-	return balanceLogger{ethClient: c}
-}
-
-// LogBalances prints the balances of the specified accounts.
-func (l balanceLogger) LogBalances(accounts ...common.Address) {
-	bals := make([]*big.Float, len(accounts))
-	for i, c := range accounts {
-		bal, err := l.ethClient.BalanceAt(context.TODO(), c, nil)
-		if err != nil {
-			log.Fatal(err)
-		}
-		bals[i] = client.WeiToEth(bal)
-	}
-	log.Println("Client balances (ETH):", bals)
 }

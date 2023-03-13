@@ -21,20 +21,22 @@ import (
 	"github.com/rivo/tview"
 	"log"
 	"os"
-	ethwallet "perun.network/go-perun/backend/ethereum/wallet"
+	gpchannel "perun.network/go-perun/channel"
+	gpwallet "perun.network/go-perun/wallet"
 	"perun.network/go-perun/wire"
+	"perun.network/perun-cardano-backend/channel"
+	"perun.network/perun-cardano-backend/wallet"
 	"perun.network/perun-examples/payment-channel/client"
 	"strconv"
 )
 
 const (
-	chainURL = "ws://127.0.0.1:8545"
-	chainID  = 1337
+	pabHost     = "localhost:9080"
+	pubKeyAlice = "5a3aeed83ffe0e41408a41de4cf9e1f1e39416643ea21231a2d00be46f5446a9"
+	pubKeyBob   = "04960fbc5fe4f1ae939fdfed8a13569384474db2a38ce7b65b328d1cd578fded"
 
-	// Private keys.
-	keyDeployer = "79ea8f62d97bc0591a4224c1725fca6b00de5b2cea286fe2e0bb35c5e76be46e"
-	keyAlice    = "1af2e950272dd403de7a5760d41c6e44d92b6d02797e51810795ff03cc2cda4f"
-	keyBob      = "f63d7d8e930bccd74e93cf5662fde2c28fd8be95edb70c73f1bdd863d07f412e"
+	walletIDAlice = "c35896086738b89c00f3ff41f2beced7449fc6e6"
+	walletIDBob   = "34dd5c2bc7ec25850765242b83a31053ac3d3fb5"
 
 	PartySelectionPage = "PartySelectionPage"
 	PartyMenuPage      = "PartyMenuPage"
@@ -101,7 +103,7 @@ func newPartiesPage(title string, view *View) tview.Primitive {
 			break
 		}
 
-		list.AddItem(c.Name, "Addr: "+c.Account.String(), digitRunes[i+1], SetClientAndSwitchToPartyMenuPage(c, view))
+		list.AddItem(c.Name, "Addr: "+c.Account.Address().String(), digitRunes[i+1], SetClientAndSwitchToPartyMenuPage(c, view))
 	}
 
 	content.AddItem(list, 0, 1, true)
@@ -118,7 +120,7 @@ func newPartyMenuPage(view *View) tview.Primitive {
 	list.SetFocusFunc(func() {
 		bal, _ := view.Client.GetLedgerBalance().Float64()
 		balString := strconv.FormatFloat(bal, 'f', 4, 64)
-		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n Menu")
+		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.Address().String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n Menu")
 	})
 	list.AddItem("Open Channel", "Open a new Channel with another party", 'o', func() {
 		view.Pages.SwitchToPage(OpenChannelPage)
@@ -149,14 +151,14 @@ func newViewChannelPage(view *View) (tview.Primitive, func(string)) {
 	channelView.SetFocusFunc(func() {
 		bal, _ := view.Client.GetLedgerBalance().Float64()
 		balString := strconv.FormatFloat(bal, 'f', 4, 64)
-		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n View Channel")
+		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.Address().String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n View Channel")
 		App.SetFocus(sendForm)
 
 	})
 	content.SetFocusFunc(func() {
 		bal, _ := view.Client.GetLedgerBalance().Float64()
 		balString := strconv.FormatFloat(bal, 'f', 4, 64)
-		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n View Channel")
+		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.Address().String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n View Channel")
 	})
 	content.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Rune() {
@@ -183,7 +185,7 @@ func newViewChannelPage(view *View) (tview.Primitive, func(string)) {
 	sendForm.SetFocusFunc(func() {
 		bal, _ := view.Client.GetLedgerBalance().Float64()
 		balString := strconv.FormatFloat(bal, 'f', 4, 64)
-		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n View Channel")
+		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.Address().String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n View Channel")
 		if view.Client.Channel != nil {
 			setForm()
 		}
@@ -194,7 +196,7 @@ func newViewChannelPage(view *View) (tview.Primitive, func(string)) {
 		channelView.SetText(s)
 		bal, _ := view.Client.GetLedgerBalance().Float64()
 		balString := strconv.FormatFloat(bal, 'f', 4, 64)
-		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n View Channel")
+		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.Address().String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n View Channel")
 		if view.Client.Channel != nil {
 			setForm()
 		}
@@ -211,7 +213,7 @@ func newOpenChannelPage(view *View) tview.Primitive {
 	content.SetFocusFunc(func() {
 		bal, _ := view.Client.GetLedgerBalance().Float64()
 		balString := strconv.FormatFloat(bal, 'f', 4, 64)
-		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n Open Channel")
+		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.Address().String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n Open Channel")
 		clientSelection := make(map[int]*client.PaymentClient)
 		var clientNames []string
 		i := 0
@@ -220,7 +222,7 @@ func newOpenChannelPage(view *View) tview.Primitive {
 				continue
 			}
 			clientSelection[i] = c
-			str := fmt.Sprintf("%s (%s)", c.Name, c.Account.String())
+			str := fmt.Sprintf("%s (%s)", c.Name, c.Account.Address().String())
 			clientNames = append(clientNames, str)
 			i++
 		}
@@ -255,7 +257,7 @@ func newOpenChannelPage(view *View) tview.Primitive {
 		if c == view.Client {
 			continue
 		}
-		str := fmt.Sprintf("%s (%s)", c.Name, c.Account.String())
+		str := fmt.Sprintf("%s (%s)", c.Name, c.Account.Address().String())
 		clientNames = append(clientNames, str)
 	}
 	return content
@@ -274,15 +276,18 @@ func SetLogFile(path string) {
 // secret keys are provided with sufficient funds.
 func main() {
 	SetLogFile("payment-client.log")
-	log.Println("Deploying contracts.")
-	adjudicator, assetHolder := deployContracts(chainURL, chainID, keyDeployer)
-	asset := *ethwallet.AsWalletAddr(assetHolder)
+	r := wallet.NewPerunCardanoWallet("http://localhost:8888")
+	wb := wallet.MakeRemoteBackend(r)
+
+	gpwallet.SetBackend(wb)
+	channel.SetWalletBackend(wb)
+	gpchannel.SetBackend(channel.Backend)
 
 	// Setup clients.
 	log.Println("Setting up clients.")
 	bus := wire.NewLocalBus() // Message bus used for off-chain communication.
-	alice := setupPaymentClient("Alice", bus, chainURL, adjudicator, asset, keyAlice)
-	bob := setupPaymentClient("Bob", bus, chainURL, adjudicator, asset, keyBob)
+	alice := setupPaymentClient("Alice", bus, pabHost, pubKeyAlice, walletIDAlice, r)
+	bob := setupPaymentClient("Bob", bus, pabHost, pubKeyBob, walletIDBob, r)
 	PaymentClients = []*client.PaymentClient{alice, bob}
 
 	App = tview.NewApplication()
@@ -381,6 +386,7 @@ func main() {
 	*/
 }
 
+/*
 func startDemo() {
 	// Deploy contracts.
 	log.Println("Deploying contracts.")
@@ -422,3 +428,4 @@ func startDemo() {
 	alice.Shutdown()
 	bob.Shutdown()
 }
+*/

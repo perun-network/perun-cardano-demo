@@ -17,26 +17,18 @@ package client
 import (
 	"context"
 	"fmt"
-	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"log"
 	"math/big"
-	ethchannel "perun.network/go-perun/backend/ethereum/channel"
-	ethwallet "perun.network/go-perun/backend/ethereum/wallet"
-	swallet "perun.network/go-perun/backend/ethereum/wallet/simple"
 	"perun.network/go-perun/channel"
 	"perun.network/go-perun/client"
 	"perun.network/go-perun/wallet"
 	"perun.network/go-perun/watcher/local"
 	"perun.network/go-perun/wire"
+	channel2 "perun.network/perun-cardano-backend/channel"
+	wallet2 "perun.network/perun-cardano-backend/wallet"
 	"polycry.pt/poly-go/sync"
-)
-
-const (
-	txFinalityDepth = 1 // Number of blocks required to confirm a transaction.
 )
 
 type Observer interface {
@@ -53,11 +45,11 @@ type Subject interface {
 // PaymentClient is a payment channel client.
 type PaymentClient struct {
 	mutex       sync.Mutex
-	ec          *ethclient.Client
 	Name        string
 	PerunClient *client.Client // The core Perun client.
 	Channel     *PaymentChannel
-	Account     wallet.Address       // The Account we use for on-chain and off-chain transactions.
+	Account     wallet.Account       // The Account we use for on-chain and off-chain transactions.
+	wAddr       wire.Address         // The address we use for off-chain communication.
 	currency    channel.Asset        // The currency we expect to get paid in.
 	channels    chan *PaymentChannel // Accepted payment channels.
 	onUpdate    func(from, to *channel.State)
@@ -82,12 +74,7 @@ func (c *PaymentClient) Deregister(observer Observer) {
 	}
 }
 
-func newEthClient(chainURL string) (*ethclient.Client, error) {
-	c, err := ethclient.Dial(chainURL)
-	return c, err
-}
-
-func (c *PaymentClient) notifyAll(from, to *channel.State) {
+func (c *PaymentClient) notifyAll(_, to *channel.State) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	str := FormatState(c.Channel, to)
@@ -100,63 +87,47 @@ func (c *PaymentClient) notifyAll(from, to *channel.State) {
 func SetupPaymentClient(
 	name string,
 	bus wire.Bus, // bus is used of off-chain communication.
-	w *swallet.Wallet, // w is the wallet used for signing transactions.
-	acc common.Address, // acc is the address of the Account to be used for signing transactions.
-	nodeURL string, // nodeURL is the URL of the blockchain node.
-	chainID uint64, // chainID is the identifier of the blockchain.
-	adjudicator common.Address, // adjudicator is the address of the adjudicator.
-	asset ethwallet.Address, // asset is the address of the asset holder for our payment channels.
+	acc wallet2.RemoteAccount, // acc is the address of the Account to be used for signing transactions.
+	pabHost string,
+	wallet *wallet2.RemoteWallet,
+	asset channel.Asset,
 ) (*PaymentClient, error) {
-	ec, err := newEthClient(nodeURL)
-	if err != nil {
-		return nil, err
-	}
+	pab, err := channel2.NewPAB(pabHost, acc)
+	// Setup funder
 
-	// Create Ethereum client and contract backend.
-	cb, err := CreateContractBackend(nodeURL, chainID, w)
-	if err != nil {
-		return nil, fmt.Errorf("creating contract backend: %w", err)
-	}
-
-	// Validate contracts.
-	err = ethchannel.ValidateAdjudicator(context.TODO(), cb, adjudicator)
-	if err != nil {
-		return nil, fmt.Errorf("validating adjudicator: %w", err)
-	}
-	err = ethchannel.ValidateAssetHolderETH(context.TODO(), cb, common.Address(asset), adjudicator)
-	if err != nil {
-		return nil, fmt.Errorf("validating adjudicator: %w", err)
-	}
-
-	// Setup funder.
-	funder := ethchannel.NewFunder(cb)
-	dep := ethchannel.NewETHDepositor()
-	ethAcc := accounts.Account{Address: acc}
-	funder.RegisterAsset(asset, dep, ethAcc)
+	funder := channel2.NewFunder(pab)
 
 	// Setup adjudicator.
-	adj := ethchannel.NewAdjudicator(cb, adjudicator, acc, ethAcc)
+	adjudicator := channel2.NewAdjudicator(pab)
 
 	// Setup dispute watcher.
-	watcher, err := local.NewWatcher(adj)
+	watcher, err := local.NewWatcher(adjudicator)
 	if err != nil {
 		return nil, fmt.Errorf("intializing watcher: %w", err)
 	}
 
+	wAddr := wire.NewAddress()
+	data, err := acc.Address().MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	err = wAddr.UnmarshalBinary(data)
+	if err != nil {
+		return nil, err
+	}
 	// Setup Perun client.
-	waddr := ethwallet.AsWalletAddr(acc)
-	perunClient, err := client.New(waddr, bus, funder, adj, w, watcher)
+	perunClient, err := client.New(wAddr, bus, funder, adjudicator, wallet, watcher)
 	if err != nil {
 		return nil, errors.WithMessage(err, "creating client")
 	}
 
 	// Create client and start request handler.
 	c := &PaymentClient{
-		ec:          ec,
 		Name:        name,
 		PerunClient: perunClient,
-		Account:     waddr,
-		currency:    &asset,
+		Account:     acc,
+		wAddr:       wAddr,
+		currency:    asset,
 		channels:    make(chan *PaymentChannel, 1),
 	}
 	go perunClient.Handle(c, c)
@@ -170,13 +141,13 @@ func (c *PaymentClient) OpenChannel(peer wire.Address, amount float64) *PaymentC
 	// we use the on-chain addresses as off-chain addresses, but we could also
 	// use different ones.
 	log.Println("OpenChannel called")
-	participants := []wire.Address{c.Account, peer}
+	participants := []wire.Address{c.WireAddress(), peer}
 
 	// We create an initial allocation which defines the starting balances.
 	initAlloc := channel.NewAllocation(2, c.currency)
 	initAlloc.SetAssetBalances(c.currency, []channel.Bal{
-		EthToWei(big.NewFloat(amount)), // Our initial balance.
-		big.NewInt(0),                  // Peer's initial balance.
+		AdaToLovelace(big.NewFloat(amount)), // Our initial balance.
+		big.NewInt(0),                       // Peer's initial balance.
 	})
 	log.Println("Created Allocation")
 
@@ -184,7 +155,7 @@ func (c *PaymentClient) OpenChannel(peer wire.Address, amount float64) *PaymentC
 	challengeDuration := uint64(10) // On-chain challenge duration in seconds.
 	proposal, err := client.NewLedgerChannelProposal(
 		challengeDuration,
-		c.Account,
+		c.Account.Address(),
 		initAlloc,
 		participants,
 	)
@@ -237,6 +208,6 @@ func (c *PaymentClient) Shutdown() {
 }
 
 func (c *PaymentClient) GetLedgerBalance() *big.Float {
-	bal, _ := c.ec.BalanceAt(context.TODO(), c.WalletAddress(), nil)
-	return WeiToEth(bal)
+	// TODO: Implement
+	return nil
 }

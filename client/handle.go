@@ -26,9 +26,9 @@ import (
 
 // HandleProposal is the callback for incoming channel proposals.
 func (c *PaymentClient) HandleProposal(p client.ChannelProposal, r *client.ProposalResponder) {
-	lcp, err := func() (*client.LedgerChannelProposal, error) {
+	lcp, err := func() (*client.LedgerChannelProposalMsg, error) {
 		// Ensure that we got a ledger channel proposal.
-		lcp, ok := p.(*client.LedgerChannelProposal)
+		lcp, ok := p.(*client.LedgerChannelProposalMsg)
 		if !ok {
 			return nil, fmt.Errorf("Invalid proposal type: %T\n", p)
 		}
@@ -40,7 +40,7 @@ func (c *PaymentClient) HandleProposal(p client.ChannelProposal, r *client.Propo
 
 		// Check that the channel has the expected assets and funding balances.
 		const assetIdx, peerIdx = 0, 1
-		if err := channel.AssetsAssertEqual(lcp.InitBals.Assets, []channel.Asset{c.currency}); err != nil {
+		if err := channel.AssertAssetsEqual(lcp.InitBals.Assets, []channel.Asset{c.currency}); err != nil {
 			return nil, fmt.Errorf("Invalid assets: %v\n", err)
 		} else if lcp.FundingAgreement[assetIdx][peerIdx].Cmp(big.NewInt(0)) != 0 {
 			return nil, fmt.Errorf("Invalid funding balance")
@@ -53,7 +53,7 @@ func (c *PaymentClient) HandleProposal(p client.ChannelProposal, r *client.Propo
 
 	// Create a channel accept message and send it.
 	accept := lcp.Accept(
-		c.Account,                // The Account we use in the channel.
+		c.WalletAddress(),        // The Account we use in the channel.
 		client.WithRandomNonce(), // Our share of the channel nonce.
 	)
 	ch, err := r.Accept(context.TODO(), accept)
@@ -62,6 +62,7 @@ func (c *PaymentClient) HandleProposal(p client.ChannelProposal, r *client.Propo
 		return
 	}
 
+	//TODO: startWatching
 	// Start the on-chain event watcher. It automatically handles disputes.
 	c.startWatching(ch)
 
@@ -74,7 +75,7 @@ func (c *PaymentClient) HandleProposal(p client.ChannelProposal, r *client.Propo
 func (c *PaymentClient) HandleUpdate(cur *channel.State, next client.ChannelUpdate, r *client.UpdateResponder) {
 	// We accept every update that increases our balance.
 	err := func() error {
-		err := channel.AssetsAssertEqual(cur.Assets, next.State.Assets)
+		err := channel.AssertAssetsEqual(cur.Assets, next.State.Assets)
 		if err != nil {
 			return fmt.Errorf("Invalid assets: %v", err)
 		}
