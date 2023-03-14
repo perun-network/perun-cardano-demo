@@ -32,6 +32,7 @@ func setupPaymentClient(
 	pubKey string,
 	walletId string,
 	r wallet.Remote,
+	cardanoWalletServerURL string,
 ) *client.PaymentClient {
 	pubKeyBytes, _ := hex.DecodeString(pubKey)
 	addr, _ := address.MakeAddressFromByteSlice(pubKeyBytes)
@@ -42,7 +43,7 @@ func setupPaymentClient(
 		log.Fatalf("error unlocking alice's account: %v", err)
 	}
 
-	c, err := client.SetupPaymentClient(name, bus, acc.(wallet.RemoteAccount), pabHost, w, channel.Asset)
+	c, err := client.SetupPaymentClient(name, bus, acc.(wallet.RemoteAccount), pabHost, w, channel.Asset, cardanoWalletServerURL)
 	if err != nil {
 		panic(err)
 	}

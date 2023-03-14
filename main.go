@@ -15,23 +15,31 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"github.com/gdamore/tcell/v2"
 	"github.com/google/uuid"
 	"github.com/rivo/tview"
 	"log"
+	"math/rand"
 	"os"
 	gpchannel "perun.network/go-perun/channel"
 	gpwallet "perun.network/go-perun/wallet"
 	"perun.network/go-perun/wire"
 	"perun.network/perun-cardano-backend/channel"
 	"perun.network/perun-cardano-backend/wallet"
+	"perun.network/perun-cardano-backend/wallet/address"
+	"perun.network/perun-cardano-backend/wallet/test"
 	"perun.network/perun-examples/payment-channel/client"
+	"polycry.pt/poly-go/sync"
 	"strconv"
+	"time"
 )
 
 const (
-	pabHost     = "localhost:9080"
+	pabHost                = "localhost:9080"
+	cardanoWalletServerURL = "http://localhost:8090/v2"
+
 	pubKeyAlice = "5a3aeed83ffe0e41408a41de4cf9e1f1e39416643ea21231a2d00be46f5446a9"
 	pubKeyBob   = "04960fbc5fe4f1ae939fdfed8a13569384474db2a38ce7b65b328d1cd578fded"
 
@@ -47,6 +55,7 @@ const (
 func SetClientAndSwitchToPartyMenuPage(client *client.PaymentClient, view *View) func() {
 	return func() {
 		view.SetClient(client)
+		log.Println("Switching to PartyMenuPage")
 		view.Pages.SwitchToPage(PartyMenuPage)
 	}
 }
@@ -55,19 +64,32 @@ type View struct {
 	id            uuid.UUID
 	Client        *client.PaymentClient
 	Pages         *tview.Pages
+	title         *tview.TextView
 	onStateUpdate func(string)
+	updateLock    sync.Mutex
 }
 
 func NewView() *View {
 	return &View{
-		id: uuid.New(),
+		id:    uuid.New(),
+		title: tview.NewTextView().SetTextAlign(tview.AlignCenter).SetDynamicColors(true).SetChangedFunc(func() { App.Draw() }),
 	}
 }
 
-func (v *View) Update(s string) {
+func (v *View) UpdateState(s string) {
+	v.updateLock.Lock()
+	defer v.updateLock.Unlock()
 	if v.onStateUpdate != nil {
 		v.onStateUpdate(s)
 	}
+}
+
+func (v *View) UpdateBalance(s string) {
+	v.updateLock.Lock()
+	defer v.updateLock.Unlock()
+	log.Printf("UpdateBalance of view: %s", v.id.String())
+	v.title.SetText("[red]" + v.Client.Name + "[white]: " + v.Client.Account.Address().String() + "\nOn-Chain Balance: " + s + " Ada")
+
 }
 
 func (v *View) GetID() uuid.UUID {
@@ -113,15 +135,11 @@ func newPartiesPage(title string, view *View) tview.Primitive {
 
 func newPartyMenuPage(view *View) tview.Primitive {
 	content := tview.NewFlex().SetDirection(tview.FlexRow)
-	title := tview.NewTextView().SetTextAlign(tview.AlignCenter).SetDynamicColors(true)
-	content.AddItem(title, 2, 0, false)
+	content.AddItem(view.title, 2, 0, false)
+	header := tview.NewTextView().SetTextAlign(tview.AlignCenter).SetText("Menu")
+	content.AddItem(header, 1, 0, false)
 
 	list := tview.NewList().SetSelectedFocusOnly(true)
-	list.SetFocusFunc(func() {
-		bal, _ := view.Client.GetLedgerBalance().Float64()
-		balString := strconv.FormatFloat(bal, 'f', 4, 64)
-		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.Address().String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n Menu")
-	})
 	list.AddItem("Open Channel", "Open a new Channel with another party", 'o', func() {
 		view.Pages.SwitchToPage(OpenChannelPage)
 	})
@@ -142,23 +160,15 @@ func newPartyMenuPage(view *View) tview.Primitive {
 
 func newViewChannelPage(view *View) (tview.Primitive, func(string)) {
 	content := tview.NewFlex().SetDirection(tview.FlexRow)
-	title := tview.NewTextView().SetTextAlign(tview.AlignCenter).SetDynamicColors(true)
-	content.AddItem(title, 2, 0, false)
-	channelView := tview.NewTextView()
+	content.AddItem(view.title, 2, 0, false)
+	content.AddItem(tview.NewTextView().SetTextAlign(tview.AlignCenter).SetText("View Channel"), 1, 0, false)
+	channelView := tview.NewTextView().SetChangedFunc(func() { App.Draw() })
 	sendForm := tview.NewForm()
 	channelView.SetText("Currently no open channel for this client")
 	content.AddItem(channelView, 0, 1, true)
 	channelView.SetFocusFunc(func() {
-		bal, _ := view.Client.GetLedgerBalance().Float64()
-		balString := strconv.FormatFloat(bal, 'f', 4, 64)
-		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.Address().String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n View Channel")
 		App.SetFocus(sendForm)
 
-	})
-	content.SetFocusFunc(func() {
-		bal, _ := view.Client.GetLedgerBalance().Float64()
-		balString := strconv.FormatFloat(bal, 'f', 4, 64)
-		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.Address().String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n View Channel")
 	})
 	content.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Rune() {
@@ -169,7 +179,9 @@ func newViewChannelPage(view *View) (tview.Primitive, func(string)) {
 	})
 	content.AddItem(sendForm, 0, 1, false)
 	setForm := func() {
-		sendField := tview.NewInputField().SetLabel("Send Payment").SetFieldWidth(20).SetText("0")
+		sendField := tview.NewInputField().SetLabel("Send Payment").SetFieldWidth(20).SetText("")
+		microPaymentAmount := tview.NewInputField().SetLabel("Micro Payment Amount").SetFieldWidth(20).SetText("")
+		microPaymentRepetitions := tview.NewInputField().SetLabel("Repetitions").SetFieldWidth(20).SetText("")
 		*sendForm = *tview.NewForm().AddFormItem(sendField).
 			AddButton("Send", func() {
 				amount, err := strconv.ParseFloat(sendField.GetText(), 64)
@@ -178,42 +190,48 @@ func newViewChannelPage(view *View) (tview.Primitive, func(string)) {
 				}
 				go view.Client.Channel.SendPayment(amount)
 			}).
+			AddFormItem(microPaymentAmount).AddFormItem(microPaymentRepetitions).
+			AddButton("Send Micro Payment", func() {
+				amount, err := strconv.ParseFloat(microPaymentAmount.GetText(), 64)
+				if err != nil {
+					return
+				}
+				repetitions, err := strconv.ParseInt(microPaymentRepetitions.GetText(), 10, 64)
+				if err != nil {
+					return
+				}
+				go func() {
+					for i := int64(0); i < repetitions; i++ {
+						view.Client.Channel.SendPayment(amount)
+						time.Sleep(50 * time.Millisecond)
+					}
+				}()
+			}).
 			AddButton("Settle", func() {
 				go view.Client.Channel.Settle()
 			})
 	}
 	sendForm.SetFocusFunc(func() {
-		bal, _ := view.Client.GetLedgerBalance().Float64()
-		balString := strconv.FormatFloat(bal, 'f', 4, 64)
-		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.Address().String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n View Channel")
 		if view.Client.Channel != nil {
 			setForm()
 		}
 	})
 
 	return content, func(s string) {
-		App.Draw()
 		channelView.SetText(s)
-		bal, _ := view.Client.GetLedgerBalance().Float64()
-		balString := strconv.FormatFloat(bal, 'f', 4, 64)
-		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.Address().String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n View Channel")
 		if view.Client.Channel != nil {
 			setForm()
 		}
-		App.Draw()
 	}
 }
 
 func newOpenChannelPage(view *View) tview.Primitive {
 	content := tview.NewFlex().SetDirection(tview.FlexRow)
-	title := tview.NewTextView().SetTextAlign(tview.AlignCenter).SetDynamicColors(true)
-	content.AddItem(title, 1, 0, false)
+	content.AddItem(view.title, 2, 0, false)
+	content.AddItem(tview.NewTextView().SetTextAlign(tview.AlignCenter).SetText("Open Channel"), 1, 0, false)
 	form := tview.NewForm()
 	content.AddItem(form, 0, 1, false)
 	content.SetFocusFunc(func() {
-		bal, _ := view.Client.GetLedgerBalance().Float64()
-		balString := strconv.FormatFloat(bal, 'f', 4, 64)
-		title.SetText("[red]" + view.Client.Name + "[white]: " + view.Client.Account.Address().String() + "\nOn-Chain Balance: " + balString + " Eth" + "\n Open Channel")
 		clientSelection := make(map[int]*client.PaymentClient)
 		var clientNames []string
 		i := 0
@@ -276,7 +294,15 @@ func SetLogFile(path string) {
 // secret keys are provided with sufficient funds.
 func main() {
 	SetLogFile("payment-client.log")
-	r := wallet.NewPerunCardanoWallet("http://localhost:8888")
+	//r := wallet.NewPerunCardanoWallet("http://localhost:8888")
+
+	aliceBytes, _ := hex.DecodeString(pubKeyAlice)
+	bobBytes, _ := hex.DecodeString(pubKeyBob)
+	aliceAddr, _ := address.MakeAddressFromByteSlice(aliceBytes)
+	bobAddr, _ := address.MakeAddressFromByteSlice(bobBytes)
+
+	rng := rand.New(rand.NewSource(0))
+	r := test.NewGenericRemote([]address.Address{aliceAddr, bobAddr}, rng)
 	wb := wallet.MakeRemoteBackend(r)
 
 	gpwallet.SetBackend(wb)
@@ -286,8 +312,8 @@ func main() {
 	// Setup clients.
 	log.Println("Setting up clients.")
 	bus := wire.NewLocalBus() // Message bus used for off-chain communication.
-	alice := setupPaymentClient("Alice", bus, pabHost, pubKeyAlice, walletIDAlice, r)
-	bob := setupPaymentClient("Bob", bus, pabHost, pubKeyBob, walletIDBob, r)
+	alice := setupPaymentClient("Alice", bus, pabHost, pubKeyAlice, walletIDAlice, r, cardanoWalletServerURL)
+	bob := setupPaymentClient("Bob", bus, pabHost, pubKeyBob, walletIDBob, r, cardanoWalletServerURL)
 	PaymentClients = []*client.PaymentClient{alice, bob}
 
 	App = tview.NewApplication()

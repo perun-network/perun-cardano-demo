@@ -30,12 +30,12 @@ func (c *PaymentClient) HandleProposal(p client.ChannelProposal, r *client.Propo
 		// Ensure that we got a ledger channel proposal.
 		lcp, ok := p.(*client.LedgerChannelProposalMsg)
 		if !ok {
-			return nil, fmt.Errorf("Invalid proposal type: %T\n", p)
+			return nil, fmt.Errorf("invalid proposal type: %T", p)
 		}
 
 		// Check that we have the correct number of participants.
 		if lcp.NumPeers() != 2 {
-			return nil, fmt.Errorf("Invalid number of participants: %d", lcp.NumPeers())
+			return nil, fmt.Errorf("invalid number of participants: %d", lcp.NumPeers())
 		}
 
 		// Check that the channel has the expected assets and funding balances.
@@ -43,7 +43,7 @@ func (c *PaymentClient) HandleProposal(p client.ChannelProposal, r *client.Propo
 		if err := channel.AssertAssetsEqual(lcp.InitBals.Assets, []channel.Asset{c.currency}); err != nil {
 			return nil, fmt.Errorf("Invalid assets: %v\n", err)
 		} else if lcp.FundingAgreement[assetIdx][peerIdx].Cmp(big.NewInt(0)) != 0 {
-			return nil, fmt.Errorf("Invalid funding balance")
+			return nil, fmt.Errorf("invalid funding balance")
 		}
 		return lcp, nil
 	}()
@@ -58,7 +58,7 @@ func (c *PaymentClient) HandleProposal(p client.ChannelProposal, r *client.Propo
 	)
 	ch, err := r.Accept(context.TODO(), accept)
 	if err != nil {
-		fmt.Printf("Error accepting channel proposal: %v\n", err)
+		log.Printf("Error accepting channel proposal: %v", err)
 		return
 	}
 
