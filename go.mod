@@ -7,12 +7,11 @@ require (
 	github.com/google/uuid v1.1.5
 	github.com/pkg/errors v0.9.1
 	github.com/rivo/tview v0.0.0-20230208211350-7dfff1ce7854
+	github.com/stretchr/testify v1.7.0
 	perun.network/go-perun v0.10.6
-	perun.network/perun-cardano-backend v1.0.0
+	perun.network/perun-cardano-backend v0.0.0-20230317135040-041197be2c84
 	polycry.pt/poly-go v0.0.0-20220301085937-fb9d71b45a37
 )
-
-replace perun.network/perun-cardano-backend => /home/jlb/git/perun-cardano-backend
 
 require (
 	github.com/btcsuite/btcutil v1.0.2 // indirect
@@ -25,7 +24,6 @@ require (
 	github.com/rivo/uniseg v0.4.2 // indirect
 	github.com/rogpeppe/go-internal v1.9.0 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
-	github.com/stretchr/testify v1.7.0 // indirect
 	golang.org/x/crypto v0.0.0-20210322153248-0c34fe9e7dc2 // indirect
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
 	golang.org/x/sys v0.4.0 // indirect
