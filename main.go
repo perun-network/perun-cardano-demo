@@ -86,7 +86,7 @@ func (v *View) UpdateBalance(s string) {
 	v.updateLock.Lock()
 	defer v.updateLock.Unlock()
 	log.Printf("UpdateBalance of view: %s", v.id.String())
-	v.title.SetText("[red]" + v.Client.Name + "[white]: " + v.Client.Account.Address().String() + "\nOn-Chain Balance: " + s + " Ada")
+	v.title.SetText("[red]" + v.Client.Name + "[white]: " + v.Client.Account.Address().String() + "\nOn-Chain Balance: [green]" + s + "[white] Ada")
 
 }
 
@@ -115,7 +115,7 @@ var digitRunes = []rune("0123456789")
 
 func newPartiesPage(title string, view *View) tview.Primitive {
 	content := tview.NewFlex().SetDirection(tview.FlexRow)
-	content.AddItem(tview.NewTextView().SetTextAlign(tview.AlignCenter).SetDynamicColors(true).SetText("[red]"+title), 1, 0, false)
+	content.AddItem(tview.NewTextView().SetTextAlign(tview.AlignCenter).SetDynamicColors(true).SetText("[red]"+title), 2, 0, false)
 	list := tview.NewList()
 
 	for i, c := range PaymentClients {
@@ -135,7 +135,7 @@ func newPartyMenuPage(view *View) tview.Primitive {
 	content := tview.NewFlex().SetDirection(tview.FlexRow)
 	content.AddItem(view.title, 2, 0, false)
 	header := tview.NewTextView().SetTextAlign(tview.AlignCenter).SetText("Menu")
-	content.AddItem(header, 1, 0, false)
+	content.AddItem(header, 2, 0, false)
 
 	list := tview.NewList().SetSelectedFocusOnly(true)
 	list.AddItem("Open Channel", "Open a new Channel with another party", 'o', func() {
@@ -159,8 +159,8 @@ func newPartyMenuPage(view *View) tview.Primitive {
 func newViewChannelPage(view *View) (tview.Primitive, func(string)) {
 	content := tview.NewFlex().SetDirection(tview.FlexRow)
 	content.AddItem(view.title, 2, 0, false)
-	content.AddItem(tview.NewTextView().SetTextAlign(tview.AlignCenter).SetText("View Channel"), 1, 0, false)
-	channelView := tview.NewTextView().SetChangedFunc(func() { App.Draw() })
+	content.AddItem(tview.NewTextView().SetTextAlign(tview.AlignCenter).SetText("View Channel"), 2, 0, false)
+	channelView := tview.NewTextView().SetDynamicColors(true).SetChangedFunc(func() { App.Draw() })
 	sendForm := tview.NewForm()
 	channelView.SetText("Currently no open channel for this client")
 	content.AddItem(channelView, 0, 1, true)
@@ -226,7 +226,7 @@ func newViewChannelPage(view *View) (tview.Primitive, func(string)) {
 func newOpenChannelPage(view *View) tview.Primitive {
 	content := tview.NewFlex().SetDirection(tview.FlexRow)
 	content.AddItem(view.title, 2, 0, false)
-	content.AddItem(tview.NewTextView().SetTextAlign(tview.AlignCenter).SetText("Open Channel"), 1, 0, false)
+	content.AddItem(tview.NewTextView().SetTextAlign(tview.AlignCenter).SetText("Open Channel"), 2, 0, false)
 	form := tview.NewForm()
 	content.AddItem(form, 0, 1, false)
 	content.SetFocusFunc(func() {

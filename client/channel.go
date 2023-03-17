@@ -29,7 +29,7 @@ func FormatState(c *PaymentChannel, state *channel.State) string {
 		panic("invalid parties length: " + strconv.Itoa(len(parties)))
 	}
 	ret := fmt.Sprintf(
-		"Channel ID: %s\nBalances:\n    %s: %s Ada\n    %s: %s Ada\nFinal: %t\nVersion: %d",
+		"Channel ID: [green]%s[white]\nBalances:\n    %s: [green]%s[white] Ada\n    %s: [green]%s[white] Ada\nFinal: [green]%t[white]\nVersion: [green]%d[white]",
 		hex.EncodeToString(id[:]),
 		parties[0].String(),
 		balAStr,
