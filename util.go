@@ -30,12 +30,14 @@ func setupPaymentClient(
 	bus wire.Bus,
 	pabHost string,
 	pubKey string,
+	paymentIdentifier string,
 	walletId string,
 	r wallet.Remote,
 	cardanoWalletServerURL string,
 ) *client.PaymentClient {
 	pubKeyBytes, _ := hex.DecodeString(pubKey)
-	addr, _ := address.MakeAddressFromByteSlice(pubKeyBytes)
+	addr, _ := address.MakeAddressFromPubKeyByteSlice(pubKeyBytes)
+	_ = addr.SetPaymentPubKeyHashFromHexString(paymentIdentifier)
 
 	w := wallet.NewRemoteWallet(r, walletId)
 	acc, err := w.Unlock(&addr)
