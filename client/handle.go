@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/big"
-
 	"perun.network/go-perun/channel"
 	"perun.network/go-perun/client"
 )
@@ -37,12 +35,11 @@ func (c *PaymentClient) HandleProposal(p client.ChannelProposal, r *client.Propo
 		if lcp.NumPeers() != 2 {
 			return nil, fmt.Errorf("invalid number of participants: %d", lcp.NumPeers())
 		}
-
 		// Check that the channel has the expected assets and funding balances.
-		const assetIdx, peerIdx = 0, 1
+		const assetIdx = 0
 		if err := channel.AssertAssetsEqual(lcp.InitBals.Assets, []channel.Asset{c.currency}); err != nil {
 			return nil, fmt.Errorf("Invalid assets: %v\n", err)
-		} else if lcp.FundingAgreement[assetIdx][peerIdx].Cmp(big.NewInt(0)) != 0 {
+		} else if lcp.FundingAgreement[assetIdx][0].Cmp(lcp.FundingAgreement[assetIdx][1]) != 0 {
 			return nil, fmt.Errorf("invalid funding balance")
 		}
 		return lcp, nil

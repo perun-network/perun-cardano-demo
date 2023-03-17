@@ -197,7 +197,7 @@ func (c *PaymentClient) OpenChannel(peer wire.Address, amount float64) *PaymentC
 	initAlloc := channel.NewAllocation(2, c.currency)
 	initAlloc.SetAssetBalances(c.currency, []channel.Bal{
 		AdaToLovelace(big.NewFloat(amount)), // Our initial balance.
-		big.NewInt(0),                       // Peer's initial balance.
+		AdaToLovelace(big.NewFloat(amount)), // Peer's initial balance.
 	})
 	log.Println("Created Allocation")
 
