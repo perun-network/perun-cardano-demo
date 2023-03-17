@@ -243,7 +243,7 @@ func newOpenChannelPage(view *View) tview.Primitive {
 			i++
 		}
 		peerField := tview.NewDropDown().SetLabel("Party").SetOptions(clientNames, nil).SetCurrentOption(0)
-		depositField := tview.NewInputField().SetLabel("Deposit").SetFieldWidth(20).SetText("0")
+		depositField := tview.NewInputField().SetLabel("Deposit").SetFieldWidth(20).SetText("")
 		*form = *tview.NewForm().AddFormItem(peerField).AddFormItem(depositField).
 			AddButton("Open Channel", func() {
 				deposit, err := strconv.ParseFloat(depositField.GetText(), 64)
@@ -307,7 +307,7 @@ func main() {
 	PaymentClients = []*client.PaymentClient{alice, bob}
 
 	App = tview.NewApplication()
-	header := tview.NewBox().SetBorder(true).SetTitle("Header")
+	header := tview.NewBox().SetBorder(true).SetTitle(" Perun Payment Channel Demo ")
 
 	right := tview.NewPages()
 	right.SetFocusFunc(func() {
