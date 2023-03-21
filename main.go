@@ -22,6 +22,7 @@ import (
 	"perun.network/go-perun/wire"
 	"perun.network/perun-cardano-backend/channel"
 	"perun.network/perun-cardano-backend/wallet"
+	"perun.network/perun-cardano-demo/client"
 	vc "perun.network/perun-demo-tui/client"
 	"perun.network/perun-demo-tui/view"
 )
@@ -59,8 +60,8 @@ func main() {
 	// Setup clients.
 	log.Println("Setting up clients.")
 	bus := wire.NewLocalBus() // Message bus used for off-chain communication.
-	alice := setupPaymentClient("Alice", bus, pabHost, pubKeyAlice, alicePaymentIdentifier, walletIDAlice, r, cardanoWalletServerURL)
-	bob := setupPaymentClient("Bob", bus, pabHost, pubKeyBob, bobPaymentIdentifier, walletIDBob, r, cardanoWalletServerURL)
+	alice := client.SetupPaymentClient("Alice", bus, pabHost, pubKeyAlice, alicePaymentIdentifier, walletIDAlice, r, cardanoWalletServerURL)
+	bob := client.SetupPaymentClient("Bob", bus, pabHost, pubKeyBob, bobPaymentIdentifier, walletIDBob, r, cardanoWalletServerURL)
 	clients := []vc.DemoClient{alice, bob}
 	_ = view.RunDemo("Cardano Payment Channel Demo", clients)
 }

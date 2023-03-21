@@ -8,7 +8,7 @@ import (
 	wallet2 "perun.network/perun-cardano-backend/wallet"
 	"perun.network/perun-cardano-backend/wallet/address"
 	"perun.network/perun-cardano-backend/wallet/test"
-	"perun.network/perun-examples/payment-channel/client"
+	"perun.network/perun-cardano-demo/client"
 	pkgtest "polycry.pt/poly-go/test"
 	"testing"
 )
