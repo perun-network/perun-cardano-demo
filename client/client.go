@@ -16,63 +16,93 @@ package client
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
-	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"log"
 	"math/big"
-	ethchannel "perun.network/go-perun/backend/ethereum/channel"
-	ethwallet "perun.network/go-perun/backend/ethereum/wallet"
-	swallet "perun.network/go-perun/backend/ethereum/wallet/simple"
+	"net/url"
 	"perun.network/go-perun/channel"
 	"perun.network/go-perun/client"
 	"perun.network/go-perun/wallet"
 	"perun.network/go-perun/watcher/local"
 	"perun.network/go-perun/wire"
+	"perun.network/go-perun/wire/net/simple"
+	channel2 "perun.network/perun-cardano-backend/channel"
+	wallet2 "perun.network/perun-cardano-backend/wallet"
+	tuiclient "perun.network/perun-demo-tui/client"
 	"polycry.pt/poly-go/sync"
+	"strconv"
+	"time"
 )
-
-const (
-	txFinalityDepth = 1 // Number of blocks required to confirm a transaction.
-)
-
-type Observer interface {
-	Update(string)
-	GetID() uuid.UUID
-}
-
-type Subject interface {
-	Register(observer Observer)
-	Deregister(observer Observer)
-	notifyAll(from, to *channel.State)
-}
 
 // PaymentClient is a payment channel client.
 type PaymentClient struct {
-	mutex       sync.Mutex
-	ec          *ethclient.Client
-	Name        string
-	PerunClient *client.Client // The core Perun client.
-	Channel     *PaymentChannel
-	Account     wallet.Address       // The Account we use for on-chain and off-chain transactions.
-	currency    channel.Asset        // The currency we expect to get paid in.
-	channels    chan *PaymentChannel // Accepted payment channels.
-	onUpdate    func(from, to *channel.State)
-	observers   []Observer
+	observerMutex sync.Mutex
+	balanceMutex  sync.Mutex
+	Name          string
+	PerunClient   *client.Client // The core Perun client.
+	Channel       *PaymentChannel
+	Account       wallet2.RemoteAccount // The Account we use for on-chain and off-chain transactions.
+	wAddr         wire.Address          // The address we use for off-chain communication.
+	currency      channel.Asset         // The currency we expect to get paid in.
+	channels      chan *PaymentChannel  // Accepted payment channels.
+	onUpdate      func(from, to *channel.State)
+	observers     []tuiclient.Observer
+	WalletURL     *url.URL
+	balance       int64
 }
 
-func (c *PaymentClient) Register(observer Observer) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+// WalletAddress returns the wallet address of the client.
+func (c *PaymentClient) WalletAddress() wallet.Address {
+	return c.Account.Address()
+}
+
+// WireAddress returns the wire address of the client.
+func (c *PaymentClient) WireAddress() wire.Address {
+	return c.wAddr
+}
+
+func (c *PaymentClient) DisplayName() string {
+	return c.Name
+}
+
+func (c *PaymentClient) DisplayAddress() string {
+	return hex.EncodeToString(c.Account.AccountAddress.GetPubKeyHashSlice())
+}
+
+func (c *PaymentClient) SendPaymentToPeer(amount float64) {
+	if !c.HasOpenChannel() {
+		return
+	}
+	c.Channel.SendPayment(amount)
+}
+
+func (c *PaymentClient) Settle() {
+	if !c.HasOpenChannel() {
+		return
+	}
+	c.Channel.Settle()
+}
+
+func (c *PaymentClient) HasOpenChannel() bool {
+	return c.Channel != nil
+}
+
+func (c *PaymentClient) Register(observer tuiclient.Observer) {
+	log.Printf("Registering observer %s on client %s", observer.GetID().String(), c.Name)
+	c.observerMutex.Lock()
+	defer c.observerMutex.Unlock()
 	c.observers = append(c.observers, observer)
+	if c.Channel != nil {
+		observer.UpdateState(FormatState(c.Channel, c.Channel.ch.State().Clone()))
+	}
+	observer.UpdateBalance(FormatBalance(c.GetBalance()))
 }
 
-func (c *PaymentClient) Deregister(observer Observer) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+func (c *PaymentClient) Deregister(observer tuiclient.Observer) {
+	c.observerMutex.Lock()
+	defer c.observerMutex.Unlock()
 	for i, o := range c.observers {
 		if o.GetID().String() == observer.GetID().String() {
 			c.observers[i] = c.observers[len(c.observers)-1]
@@ -82,101 +112,117 @@ func (c *PaymentClient) Deregister(observer Observer) {
 	}
 }
 
-func newEthClient(chainURL string) (*ethclient.Client, error) {
-	c, err := ethclient.Dial(chainURL)
-	return c, err
-}
-
-func (c *PaymentClient) notifyAll(from, to *channel.State) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+func (c *PaymentClient) NotifyAllState(_, to *channel.State) {
+	c.observerMutex.Lock()
+	defer c.observerMutex.Unlock()
 	str := FormatState(c.Channel, to)
 	for _, o := range c.observers {
-		o.Update(str)
+		o.UpdateState(str)
 	}
+}
+
+func FormatBalance(bal int64) string {
+	balBig := big.NewInt(bal)
+	balAda, _ := LovelaceToAda(balBig).Float64()
+	balString := strconv.FormatFloat(balAda, 'f', 6, 64)
+	return balString
+}
+
+func (c *PaymentClient) NotifyAllBalance(bal int64) {
+	str := FormatBalance(bal)
+	for _, o := range c.observers {
+		o.UpdateBalance(str)
+	}
+}
+
+func (c *PaymentClient) PollBalances() {
+	for {
+		time.Sleep(1 * time.Second)
+		bal, err := c.QueryBalance()
+		if err != nil {
+			log.Println("Error getting balance: ", err)
+			continue
+		}
+		c.balanceMutex.Lock()
+		if bal != c.balance {
+			c.balance = bal
+			c.NotifyAllBalance(bal)
+		}
+		c.balanceMutex.Unlock()
+	}
+}
+
+func (c *PaymentClient) GetBalance() int64 {
+	c.balanceMutex.Lock()
+	defer c.balanceMutex.Unlock()
+	return c.balance
 }
 
 // SetupPaymentClient creates a new payment client.
 func SetupPaymentClient(
 	name string,
 	bus wire.Bus, // bus is used of off-chain communication.
-	w *swallet.Wallet, // w is the wallet used for signing transactions.
-	acc common.Address, // acc is the address of the Account to be used for signing transactions.
-	nodeURL string, // nodeURL is the URL of the blockchain node.
-	chainID uint64, // chainID is the identifier of the blockchain.
-	adjudicator common.Address, // adjudicator is the address of the adjudicator.
-	asset ethwallet.Address, // asset is the address of the asset holder for our payment channels.
+	acc wallet2.RemoteAccount, // acc is the address of the Account to be used for signing transactions.
+	pabHost string,
+	wallet *wallet2.RemoteWallet,
+	asset channel.Asset,
+	cardanoWalletServerURL string,
 ) (*PaymentClient, error) {
-	ec, err := newEthClient(nodeURL)
+	walletUrl, err := url.Parse(cardanoWalletServerURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to parse cardano wallet server url: %w", err)
 	}
+	pab, err := channel2.NewPAB(pabHost, acc)
+	// Setup funder
 
-	// Create Ethereum client and contract backend.
-	cb, err := CreateContractBackend(nodeURL, chainID, w)
-	if err != nil {
-		return nil, fmt.Errorf("creating contract backend: %w", err)
-	}
-
-	// Validate contracts.
-	err = ethchannel.ValidateAdjudicator(context.TODO(), cb, adjudicator)
-	if err != nil {
-		return nil, fmt.Errorf("validating adjudicator: %w", err)
-	}
-	err = ethchannel.ValidateAssetHolderETH(context.TODO(), cb, common.Address(asset), adjudicator)
-	if err != nil {
-		return nil, fmt.Errorf("validating adjudicator: %w", err)
-	}
-
-	// Setup funder.
-	funder := ethchannel.NewFunder(cb)
-	dep := ethchannel.NewETHDepositor()
-	ethAcc := accounts.Account{Address: acc}
-	funder.RegisterAsset(asset, dep, ethAcc)
+	funder := channel2.NewFunder(pab)
 
 	// Setup adjudicator.
-	adj := ethchannel.NewAdjudicator(cb, adjudicator, acc, ethAcc)
+	adjudicator := channel2.NewAdjudicator(pab)
 
 	// Setup dispute watcher.
-	watcher, err := local.NewWatcher(adj)
+	watcher, err := local.NewWatcher(adjudicator)
 	if err != nil {
 		return nil, fmt.Errorf("intializing watcher: %w", err)
 	}
 
+	wAddr := simple.NewAddress(acc.Address().String())
 	// Setup Perun client.
-	waddr := ethwallet.AsWalletAddr(acc)
-	perunClient, err := client.New(waddr, bus, funder, adj, w, watcher)
+	perunClient, err := client.New(wAddr, bus, funder, adjudicator, wallet, watcher)
 	if err != nil {
 		return nil, errors.WithMessage(err, "creating client")
 	}
 
 	// Create client and start request handler.
 	c := &PaymentClient{
-		ec:          ec,
 		Name:        name,
 		PerunClient: perunClient,
-		Account:     waddr,
-		currency:    &asset,
+		Account:     acc,
+		wAddr:       wAddr,
+		currency:    asset,
 		channels:    make(chan *PaymentChannel, 1),
+		WalletURL:   walletUrl,
+		balance:     0,
 	}
+	go c.PollBalances()
 	go perunClient.Handle(c, c)
 
 	return c, nil
 }
 
 // OpenChannel opens a new channel with the specified peer and funding.
-func (c *PaymentClient) OpenChannel(peer wire.Address, amount float64) *PaymentChannel {
-	// We define the channel participants. The proposer has always index 0. Here
+func (c *PaymentClient) OpenChannel(peer wire.Address, amount float64) {
+	// We define the channel participants. The proposer always has index 0. Here
 	// we use the on-chain addresses as off-chain addresses, but we could also
 	// use different ones.
 	log.Println("OpenChannel called")
-	participants := []wire.Address{c.Account, peer}
+	participants := []wire.Address{c.WireAddress(), peer}
 
 	// We create an initial allocation which defines the starting balances.
 	initAlloc := channel.NewAllocation(2, c.currency)
 	initAlloc.SetAssetBalances(c.currency, []channel.Bal{
-		EthToWei(big.NewFloat(amount)), // Our initial balance.
-		big.NewInt(0),                  // Peer's initial balance.
+		AdaToLovelace(big.NewFloat(amount)), // Our initial balance.
+		AdaToLovelace(big.NewFloat(amount)), // Peer's initial balance.
 	})
 	log.Println("Created Allocation")
 
@@ -184,7 +230,7 @@ func (c *PaymentClient) OpenChannel(peer wire.Address, amount float64) *PaymentC
 	challengeDuration := uint64(10) // On-chain challenge duration in seconds.
 	proposal, err := client.NewLedgerChannelProposal(
 		challengeDuration,
-		c.Account,
+		c.Account.Address(),
 		initAlloc,
 		participants,
 	)
@@ -208,9 +254,8 @@ func (c *PaymentClient) OpenChannel(peer wire.Address, amount float64) *PaymentC
 	log.Println("Started Watching")
 
 	c.Channel = newPaymentChannel(ch, c.currency)
-	c.Channel.ch.OnUpdate(c.notifyAll)
-	c.notifyAll(nil, ch.State())
-	return c.Channel
+	c.Channel.ch.OnUpdate(c.NotifyAllState)
+	c.NotifyAllState(nil, ch.State())
 }
 
 // startWatching starts the dispute watcher for the specified channel.
@@ -226,17 +271,12 @@ func (c *PaymentClient) startWatching(ch *client.Channel) {
 // AcceptedChannel returns the next accepted channel.
 func (c *PaymentClient) AcceptedChannel() *PaymentChannel {
 	c.Channel = <-c.channels
-	c.Channel.ch.OnUpdate(c.notifyAll)
-	c.notifyAll(nil, c.Channel.ch.State())
+	c.Channel.ch.OnUpdate(c.NotifyAllState)
+	c.NotifyAllState(nil, c.Channel.ch.State())
 	return c.Channel
 }
 
 // Shutdown gracefully shuts down the client.
 func (c *PaymentClient) Shutdown() {
 	c.PerunClient.Close()
-}
-
-func (c *PaymentClient) GetLedgerBalance() *big.Float {
-	bal, _ := c.ec.BalanceAt(context.TODO(), c.WalletAddress(), nil)
-	return WeiToEth(bal)
 }

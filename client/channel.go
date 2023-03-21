@@ -5,10 +5,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
-	"strconv"
-
 	"perun.network/go-perun/channel"
 	"perun.network/go-perun/client"
+	"perun.network/perun-cardano-backend/wallet/address"
+	"strconv"
 )
 
 // PaymentChannel is a wrapper for a Perun channel for the payment use case.
@@ -19,21 +19,24 @@ type PaymentChannel struct {
 
 func FormatState(c *PaymentChannel, state *channel.State) string {
 	id := c.ch.ID()
-	parties := c.ch.Peers()
-	balA, _ := WeiToEth(state.Allocation.Balance(0, c.currency)).Float64()
+	parties := c.ch.Params().Parts
+	balA, _ := LovelaceToAda(state.Allocation.Balance(0, c.currency)).Float64()
 	balAStr := strconv.FormatFloat(balA, 'f', 4, 64)
 
-	balB, _ := WeiToEth(state.Allocation.Balance(1, c.currency)).Float64()
+	fstPartyPaymentAddr := hex.EncodeToString(parties[0].(*address.Address).GetPubKeyHashSlice())
+	sndPartyPaymentAddr := hex.EncodeToString(parties[1].(*address.Address).GetPubKeyHashSlice())
+
+	balB, _ := LovelaceToAda(state.Allocation.Balance(1, c.currency)).Float64()
 	balBStr := strconv.FormatFloat(balB, 'f', 4, 64)
 	if len(parties) != 2 {
 		panic("invalid parties length: " + strconv.Itoa(len(parties)))
 	}
 	ret := fmt.Sprintf(
-		"Channel ID: %s\nBalances:\n    %s: %s Eth\n    %s: %s Eth\nFinal: %t\nVersion: %d",
+		"Channel ID: [green]%s[white]\nBalances:\n    %s: [green]%s[white] Ada\n    %s: [green]%s[white] Ada\nFinal: [green]%t[white]\nVersion: [green]%d[white]",
 		hex.EncodeToString(id[:]),
-		parties[0].String(),
+		fstPartyPaymentAddr,
 		balAStr,
-		parties[1].String(),
+		sndPartyPaymentAddr,
 		balBStr,
 		state.IsFinal,
 		state.Version,
@@ -49,37 +52,19 @@ func newPaymentChannel(ch *client.Channel, currency channel.Asset) *PaymentChann
 	}
 }
 
-func (c PaymentChannel) String() string {
-	id := c.ch.ID()
-	parties := c.ch.Peers()
-	if len(parties) != 2 {
-		panic("invalid parties length: " + strconv.Itoa(len(parties)))
-	}
-	state := c.ch.State().Clone()
-	ret := fmt.Sprintf(
-		"Channel ID: %s\nBalances:\n    %s: %s\n    %s: %s\nFinal: %t\nVersion: %d",
-		hex.EncodeToString(id[:]),
-		parties[0].String(),
-		state.Allocation.Balance(0, c.currency),
-		parties[1].String(),
-		state.Allocation.Balance(1, c.currency),
-		state.IsFinal,
-		state.Version,
-	)
-	return ret
-}
-
 // SendPayment sends a payment to the channel peer.
 func (c PaymentChannel) SendPayment(amount float64) {
 	// Transfer the given amount from us to peer.
 	// Use UpdateBy to update the channel state.
-	err := c.ch.UpdateBy(context.TODO(), func(state *channel.State) error { // We use context.TODO to keep the code simple.
-		ethAmount := EthToWei(big.NewFloat(amount))
+	err := c.ch.Update(context.TODO(), func(state *channel.State) { // We use context.TODO to keep the code simple.
+		lovelaceAmount := AdaToLovelace(big.NewFloat(amount))
 		actor := c.ch.Idx()
 		peer := 1 - actor
-		state.Allocation.TransferBalance(actor, peer, c.currency, ethAmount)
-		return nil
+		state.Allocation.TransferBalance(actor, peer, c.currency, lovelaceAmount)
 	})
+	if err != nil {
+		panic(err)
+	}
 	if err != nil {
 		panic(err) // We panic on error to keep the code simple.
 	}
@@ -89,9 +74,8 @@ func (c PaymentChannel) SendPayment(amount float64) {
 func (c PaymentChannel) Settle() {
 	// Finalize the channel to enable fast settlement.
 	if !c.ch.State().IsFinal {
-		err := c.ch.UpdateBy(context.TODO(), func(state *channel.State) error {
+		err := c.ch.Update(context.TODO(), func(state *channel.State) {
 			state.IsFinal = true
-			return nil
 		})
 		if err != nil {
 			panic(err)

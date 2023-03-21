@@ -16,56 +16,21 @@ package client
 
 import (
 	"math/big"
-
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
-	ethchannel "perun.network/go-perun/backend/ethereum/channel"
-	ethwallet "perun.network/go-perun/backend/ethereum/wallet"
-	swallet "perun.network/go-perun/backend/ethereum/wallet/simple"
-	"perun.network/go-perun/wire"
 )
 
-// CreateContractBackend creates a new contract backend.
-func CreateContractBackend(
-	nodeURL string,
-	chainID uint64,
-	w *swallet.Wallet,
-) (ethchannel.ContractBackend, error) {
-	signer := types.NewEIP155Signer(new(big.Int).SetUint64(chainID))
-	transactor := swallet.NewTransactor(w, signer)
-
-	ethClient, err := ethclient.Dial(nodeURL)
-	if err != nil {
-		return ethchannel.ContractBackend{}, err
-	}
-
-	return ethchannel.NewContractBackend(ethClient, transactor, txFinalityDepth), nil
+// AdaToLovelace converts a given amount in Ada to Lovelace.
+func AdaToLovelace(adaAmount *big.Float) (lovelaceAmount *big.Int) {
+	lovelacePerAda := new(big.Int).Exp(big.NewInt(10), big.NewInt(6), nil)
+	lovelacePerAdaFloat := new(big.Float).SetInt(lovelacePerAda)
+	lovelaceAmountFloat := new(big.Float).Mul(adaAmount, lovelacePerAdaFloat)
+	lovelaceAmount, _ = lovelaceAmountFloat.Int(nil)
+	return lovelaceAmount
 }
 
-// WalletAddress returns the wallet address of the client.
-func (c *PaymentClient) WalletAddress() common.Address {
-	return common.Address(*c.Account.(*ethwallet.Address))
-}
-
-// WireAddress returns the wire address of the client.
-func (c *PaymentClient) WireAddress() wire.Address {
-	return c.Account
-}
-
-// EthToWei converts a given amount in ETH to Wei.
-func EthToWei(ethAmount *big.Float) (weiAmount *big.Int) {
-	weiPerEth := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
-	weiPerEthFloat := new(big.Float).SetInt(weiPerEth)
-	weiAmountFloat := new(big.Float).Mul(ethAmount, weiPerEthFloat)
-	weiAmount, _ = weiAmountFloat.Int(nil)
-	return weiAmount
-}
-
-// WeiToEth converts a given amount in Wei to ETH.
-func WeiToEth(weiAmount *big.Int) (ethAmount *big.Float) {
-	weiPerEth := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
-	weiPerEthFloat := new(big.Float).SetInt(weiPerEth)
-	weiAmountFloat := new(big.Float).SetInt(weiAmount)
-	return new(big.Float).Quo(weiAmountFloat, weiPerEthFloat)
+// LovelaceToAda converts a given amount in Lovelace to Ada.
+func LovelaceToAda(lovelaceAmount *big.Int) (adaAmount *big.Float) {
+	lovelacePerAda := new(big.Int).Exp(big.NewInt(10), big.NewInt(6), nil)
+	lovelacePerAdaFloat := new(big.Float).SetInt(lovelacePerAda)
+	lovelaceAmountFloat := new(big.Float).SetInt(lovelaceAmount)
+	return new(big.Float).Quo(lovelaceAmountFloat, lovelacePerAdaFloat)
 }
