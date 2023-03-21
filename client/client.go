@@ -30,6 +30,7 @@ import (
 	"perun.network/go-perun/wire/net/simple"
 	channel2 "perun.network/perun-cardano-backend/channel"
 	wallet2 "perun.network/perun-cardano-backend/wallet"
+	"perun.network/perun-cardano-backend/wallet/address"
 	tuiclient "perun.network/perun-demo-tui/client"
 	"polycry.pt/poly-go/sync"
 	"strconv"
@@ -158,8 +159,37 @@ func (c *PaymentClient) GetBalance() int64 {
 	return c.balance
 }
 
-// SetupPaymentClient creates a new payment client.
+// setupPaymentClient sets up a new client with the given parameters.
 func SetupPaymentClient(
+	name string,
+	bus wire.Bus,
+	pabHost string,
+	pubKey string,
+	paymentIdentifier string,
+	walletId string,
+	r wallet2.Remote,
+	cardanoWalletServerURL string,
+) *PaymentClient {
+	pubKeyBytes, _ := hex.DecodeString(pubKey)
+	addr, _ := address.MakeAddressFromPubKeyByteSlice(pubKeyBytes)
+	_ = addr.SetPaymentPubKeyHashFromHexString(paymentIdentifier)
+
+	w := wallet2.NewRemoteWallet(r, walletId)
+	acc, err := w.Unlock(&addr)
+	if err != nil {
+		log.Fatalf("error unlocking alice's account: %v", err)
+	}
+
+	c, err := setupPaymentClient(name, bus, acc.(wallet2.RemoteAccount), pabHost, w, channel2.Asset, cardanoWalletServerURL)
+	if err != nil {
+		panic(err)
+	}
+
+	return c
+}
+
+// SetupPaymentClient creates a new payment client.
+func setupPaymentClient(
 	name string,
 	bus wire.Bus, // bus is used of off-chain communication.
 	acc wallet2.RemoteAccount, // acc is the address of the Account to be used for signing transactions.

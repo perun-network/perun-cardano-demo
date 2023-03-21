@@ -1,4 +1,4 @@
-module perun.network/perun-examples/payment-channel
+module perun.network/perun-cardano-demo
 
 go 1.17
 
