@@ -16,36 +16,25 @@ package client
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"log"
 	"math/big"
 	"net/url"
 	"perun.network/go-perun/channel"
 	"perun.network/go-perun/client"
+	"perun.network/go-perun/wallet"
 	"perun.network/go-perun/watcher/local"
 	"perun.network/go-perun/wire"
 	"perun.network/go-perun/wire/net/simple"
 	channel2 "perun.network/perun-cardano-backend/channel"
 	wallet2 "perun.network/perun-cardano-backend/wallet"
+	tuiclient "perun.network/perun-demo-tui/client"
 	"polycry.pt/poly-go/sync"
 	"strconv"
 	"time"
 )
-
-type Observer interface {
-	UpdateState(string)
-	UpdateBalance(string)
-	GetID() uuid.UUID
-}
-
-type Subject interface {
-	Register(observer Observer)
-	Deregister(observer Observer)
-	notifyAllState(from, to *channel.State)
-	notifyAllBalance()
-}
 
 // PaymentClient is a payment channel client.
 type PaymentClient struct {
@@ -59,12 +48,48 @@ type PaymentClient struct {
 	currency      channel.Asset         // The currency we expect to get paid in.
 	channels      chan *PaymentChannel  // Accepted payment channels.
 	onUpdate      func(from, to *channel.State)
-	observers     []Observer
+	observers     []tuiclient.Observer
 	WalletURL     *url.URL
 	balance       int64
 }
 
-func (c *PaymentClient) Register(observer Observer) {
+// WalletAddress returns the wallet address of the client.
+func (c *PaymentClient) WalletAddress() wallet.Address {
+	return c.Account.Address()
+}
+
+// WireAddress returns the wire address of the client.
+func (c *PaymentClient) WireAddress() wire.Address {
+	return c.wAddr
+}
+
+func (c *PaymentClient) DisplayName() string {
+	return c.Name
+}
+
+func (c *PaymentClient) DisplayAddress() string {
+	return hex.EncodeToString(c.Account.AccountAddress.GetPubKeyHashSlice())
+}
+
+func (c *PaymentClient) SendPaymentToPeer(amount float64) {
+	if !c.HasOpenChannel() {
+		return
+	}
+	c.Channel.SendPayment(amount)
+}
+
+func (c *PaymentClient) Settle() {
+	if !c.HasOpenChannel() {
+		return
+	}
+	c.Channel.Settle()
+}
+
+func (c *PaymentClient) HasOpenChannel() bool {
+	return c.Channel != nil
+}
+
+func (c *PaymentClient) Register(observer tuiclient.Observer) {
 	log.Printf("Registering observer %s on client %s", observer.GetID().String(), c.Name)
 	c.observerMutex.Lock()
 	defer c.observerMutex.Unlock()
@@ -75,7 +100,7 @@ func (c *PaymentClient) Register(observer Observer) {
 	observer.UpdateBalance(FormatBalance(c.GetBalance()))
 }
 
-func (c *PaymentClient) Deregister(observer Observer) {
+func (c *PaymentClient) Deregister(observer tuiclient.Observer) {
 	c.observerMutex.Lock()
 	defer c.observerMutex.Unlock()
 	for i, o := range c.observers {
@@ -87,7 +112,7 @@ func (c *PaymentClient) Deregister(observer Observer) {
 	}
 }
 
-func (c *PaymentClient) notifyAllState(_, to *channel.State) {
+func (c *PaymentClient) NotifyAllState(_, to *channel.State) {
 	c.observerMutex.Lock()
 	defer c.observerMutex.Unlock()
 	str := FormatState(c.Channel, to)
@@ -103,7 +128,7 @@ func FormatBalance(bal int64) string {
 	return balString
 }
 
-func (c *PaymentClient) notifyAllBalance(bal int64) {
+func (c *PaymentClient) NotifyAllBalance(bal int64) {
 	str := FormatBalance(bal)
 	for _, o := range c.observers {
 		o.UpdateBalance(str)
@@ -121,7 +146,7 @@ func (c *PaymentClient) PollBalances() {
 		c.balanceMutex.Lock()
 		if bal != c.balance {
 			c.balance = bal
-			c.notifyAllBalance(bal)
+			c.NotifyAllBalance(bal)
 		}
 		c.balanceMutex.Unlock()
 	}
@@ -186,7 +211,7 @@ func SetupPaymentClient(
 }
 
 // OpenChannel opens a new channel with the specified peer and funding.
-func (c *PaymentClient) OpenChannel(peer wire.Address, amount float64) *PaymentChannel {
+func (c *PaymentClient) OpenChannel(peer wire.Address, amount float64) {
 	// We define the channel participants. The proposer always has index 0. Here
 	// we use the on-chain addresses as off-chain addresses, but we could also
 	// use different ones.
@@ -229,9 +254,8 @@ func (c *PaymentClient) OpenChannel(peer wire.Address, amount float64) *PaymentC
 	log.Println("Started Watching")
 
 	c.Channel = newPaymentChannel(ch, c.currency)
-	c.Channel.ch.OnUpdate(c.notifyAllState)
-	c.notifyAllState(nil, ch.State())
-	return c.Channel
+	c.Channel.ch.OnUpdate(c.NotifyAllState)
+	c.NotifyAllState(nil, ch.State())
 }
 
 // startWatching starts the dispute watcher for the specified channel.
@@ -247,8 +271,8 @@ func (c *PaymentClient) startWatching(ch *client.Channel) {
 // AcceptedChannel returns the next accepted channel.
 func (c *PaymentClient) AcceptedChannel() *PaymentChannel {
 	c.Channel = <-c.channels
-	c.Channel.ch.OnUpdate(c.notifyAllState)
-	c.notifyAllState(nil, c.Channel.ch.State())
+	c.Channel.ch.OnUpdate(c.NotifyAllState)
+	c.NotifyAllState(nil, c.Channel.ch.State())
 	return c.Channel
 }
 

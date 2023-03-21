@@ -5,10 +5,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
-	"strconv"
-
 	"perun.network/go-perun/channel"
 	"perun.network/go-perun/client"
+	"perun.network/perun-cardano-backend/wallet/address"
+	"strconv"
 )
 
 // PaymentChannel is a wrapper for a Perun channel for the payment use case.
@@ -23,6 +23,9 @@ func FormatState(c *PaymentChannel, state *channel.State) string {
 	balA, _ := LovelaceToAda(state.Allocation.Balance(0, c.currency)).Float64()
 	balAStr := strconv.FormatFloat(balA, 'f', 4, 64)
 
+	fstPartyPaymentAddr := hex.EncodeToString(parties[0].(*address.Address).GetPubKeyHashSlice())
+	sndPartyPaymentAddr := hex.EncodeToString(parties[1].(*address.Address).GetPubKeyHashSlice())
+
 	balB, _ := LovelaceToAda(state.Allocation.Balance(1, c.currency)).Float64()
 	balBStr := strconv.FormatFloat(balB, 'f', 4, 64)
 	if len(parties) != 2 {
@@ -31,9 +34,9 @@ func FormatState(c *PaymentChannel, state *channel.State) string {
 	ret := fmt.Sprintf(
 		"Channel ID: [green]%s[white]\nBalances:\n    %s: [green]%s[white] Ada\n    %s: [green]%s[white] Ada\nFinal: [green]%t[white]\nVersion: [green]%d[white]",
 		hex.EncodeToString(id[:]),
-		parties[0].String(),
+		fstPartyPaymentAddr,
 		balAStr,
-		parties[1].String(),
+		sndPartyPaymentAddr,
 		balBStr,
 		state.IsFinal,
 		state.Version,
