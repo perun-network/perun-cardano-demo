@@ -16,19 +16,7 @@ package client
 
 import (
 	"math/big"
-	"perun.network/go-perun/wallet"
-	"perun.network/go-perun/wire"
 )
-
-// WalletAddress returns the wallet address of the client.
-func (c *PaymentClient) WalletAddress() wallet.Address {
-	return c.Account.Address()
-}
-
-// WireAddress returns the wire address of the client.
-func (c *PaymentClient) WireAddress() wire.Address {
-	return c.wAddr
-}
 
 // AdaToLovelace converts a given amount in Ada to Lovelace.
 func AdaToLovelace(adaAmount *big.Float) (lovelaceAmount *big.Int) {

@@ -24,7 +24,7 @@ func TestBalanceQuery(t *testing.T) {
 	rng := pkgtest.Prng(t)
 	addrBytes, err := hex.DecodeString(pubKeyAlice)
 	require.NoError(t, err)
-	addr, err := address.MakeAddressFromByteSlice(addrBytes)
+	addr, err := address.MakeAddressFromPubKeyByteSlice(addrBytes)
 	require.NoError(t, err)
 	r := test.NewGenericRemote([]address.Address{addr}, rng)
 	w := wallet2.NewRemoteWallet(r, walletIDAlice)
